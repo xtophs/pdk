@@ -1,4 +1,4 @@
-package taxi
+package main
 
 import "testing"
 
