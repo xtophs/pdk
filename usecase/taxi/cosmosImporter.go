@@ -1,7 +1,8 @@
 package main
 
 import (
-	"fmt"
+	"log"
+	"time"
 
 	"github.com/Azure/go-autorest/autorest/utils"
 )
@@ -14,31 +15,41 @@ type TaxiImporter interface {
 
 // CosmosImporter struct
 type CosmosImporter struct {
-	database string
-	password string
+	manager *RecordManager
 }
 
 // NewCosmosImporter returns an initialized TaxiImporter interface
 func NewCosmosImporter() TaxiImporter {
 	return &CosmosImporter{
-		database: utils.GetEnvVarOrExit("AZURE_DATABASE"),
-		password: utils.GetEnvVarOrExit("AZURE_DATABASE_PASSWORD"),
+		manager: NewRecordManager(),
 	}
 }
 
-func (i *CosmosImporter) init() {
-	i.database = utils.GetEnvVarOrExit("AZURE_DATABASE")
-	i.password = utils.GetEnvVarOrExit("AZURE_DATABASE_PASSWORD")
-}
-
 func (i *CosmosImporter) fetch(urls <-chan string, records chan<- Record) {
-
-	fmt.Println("CosmosImporter fetch")
-	f := NewRecordManager()
-	f.fetch(urls, records)
+	// TODO: add concurrency again
+	i.manager.fetch(urls, records)
 	return
 }
 
 func (i *CosmosImporter) parse(records <-chan Record) {
-	return
+
+	// TODO: add concurrency again
+	writer, err := NewCosmosWriter(utils.GetEnvVarOrExit("AZURE_DATABASE"), utils.GetEnvVarOrExit("AZURE_DATABASE_PASSWORD"))
+	if err != nil {
+		log.Println("Could not craete Cosmos writer")
+		return
+	}
+	start := time.Now()
+
+	for record := range records {
+		if record.Type != 'g' && record.Type == 'y' {
+			log.Println("unknown record type")
+			i.manager.badUnknowns.Add(1)
+			i.manager.skippedRecs.Add(1)
+			continue
+		}
+		writer.write(&record, i.manager)
+		i.manager.printStats()
+	}
+	log.Printf("writing %v docs took %v\n", len(records), time.Since(start))
 }

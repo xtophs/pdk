@@ -11,6 +11,9 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/pilosa/pdk"
 )
 
 // RecordManager fetches
@@ -18,17 +21,36 @@ type RecordManager struct {
 	UseReadAll bool
 	totalBytes int64
 	bytesLock  sync.Mutex
+	nexter     *Nexter
 
-	totalRecs   *Counter
-	skippedRecs *Counter
+	totalRecs     *Counter
+	skippedRecs   *Counter
+	nullLocs      *Counter
+	badLocs       *Counter
+	badSpeeds     *Counter
+	badTotalAmnts *Counter
+	badDurations  *Counter
+	badPassCounts *Counter
+	badDist       *Counter
+	badUnknowns   *Counter
 }
 
 //NewRecordManager returns a new RecordManager
 func NewRecordManager() *RecordManager {
 	return &RecordManager{
-		UseReadAll:  false,
-		totalRecs:   &Counter{},
-		skippedRecs: &Counter{},
+		UseReadAll: false,
+		nexter:     &Nexter{},
+
+		totalRecs:     &Counter{},
+		skippedRecs:   &Counter{},
+		nullLocs:      &Counter{},
+		badLocs:       &Counter{},
+		badSpeeds:     &Counter{},
+		badTotalAmnts: &Counter{},
+		badDurations:  &Counter{},
+		badPassCounts: &Counter{},
+		badDist:       &Counter{},
+		badUnknowns:   &Counter{},
 	}
 
 }
@@ -135,4 +157,33 @@ func (f *RecordManager) BytesProcessed() (num int64) {
 	num = f.totalBytes
 	f.bytesLock.Unlock()
 	return
+}
+
+// getNextURL fetches the next url from the channel, or if it is emtpy, gets a
+// url from the failedURLs map after 10 seconds of waiting on the channel. As
+// long as it gets a url, its boolean return value is true - if it does not get
+// a url, it returns false.
+func getNextURL(urls <-chan string, failedURLs map[string]int) (string, bool) {
+	url, open := <-urls
+	if !open {
+		for url, _ := range failedURLs {
+			return url, true
+		}
+		return "", false
+	}
+	return url, true
+}
+
+func (m *RecordManager) printStats() *time.Ticker {
+	t := time.NewTicker(time.Second * 10)
+	start := time.Now()
+	go func() {
+		for range t.C {
+			duration := time.Since(start)
+			bytes := m.BytesProcessed()
+			log.Printf("Rides: %d, Bytes: %s, Records: %v, Duration: %v, Rate: %v/s", m.nexter.Last(), pdk.Bytes(bytes), m.totalRecs.Get(), duration, pdk.Bytes(float64(bytes)/duration.Seconds()))
+			log.Printf("Skipped: %v, badLocs: %v, nullLocs: %v, badSpeeds: %v, badTotalAmnts: %v, badDurations: %v, badUnknowns: %v, badPassCounts: %v, badDist: %v", m.skippedRecs.Get(), m.badLocs.Get(), m.nullLocs.Get(), m.badSpeeds.Get(), m.badTotalAmnts.Get(), m.badDurations.Get(), m.badUnknowns.Get(), m.badPassCounts.Get(), m.badDist.Get())
+		}
+	}()
+	return t
 }
